@@ -3,7 +3,7 @@ import 'home_screen.dart';
 import 'news_screen.dart';
 import 'video_screen.dart';
 import 'threed_screen.dart';
-import 'ar_screen.dart';
+import 'ai_screen.dart';
 
 class MainNavigation extends StatefulWidget {
   const MainNavigation({super.key});
@@ -24,7 +24,7 @@ class _MainNavigationState extends State<MainNavigation> {
     const NewsScreen(),
     const VideoScreen(),
     const ThreeDScreen(),
-    const ARScreen(),
+    const ChatScreen(),
   ];
 
   @override
@@ -72,8 +72,8 @@ class _MainNavigationState extends State<MainNavigation> {
                   isActive: _currentIndex == 3,
                 ),
                 _buildNavButton(
-                  icon: Icons.camera_alt_outlined,
-                  label: 'AR',
+                  icon: Icons.chat_bubble_outline,
+                  label: 'Chatbot',
                   index: 4,
                   isActive: _currentIndex == 4,
                 ),

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:youtube_player_flutter/youtube_player_flutter.dart';
+import 'package:youtube_player_iframe/youtube_player_iframe.dart'; // Dùng thư viện Iframe
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 
@@ -11,48 +11,41 @@ class VideoScreen extends StatefulWidget {
 }
 
 class _VideoScreenState extends State<VideoScreen> {
+  // --- QUAN TRỌNG: Hãy thay API Key của bạn vào đây ---
   static const String API_KEY = 'AIzaSyDuP1wIcmES-YSrHSqUiheh38kN5HjKNC0';
-  
+
   late YoutubePlayerController _controller;
-  bool _isPlayerReady = false;
-  List<Map<String, dynamic>> _suggestedVideos = [];
-  bool _isLoading = true;
   
-  // Default video - Introduction to 3D Modeling
-  String _currentVideoId = 'pRaC9YldAKw';
+  // Các biến dữ liệu hiển thị (từ code cũ)
   String _currentVideoTitle = 'Introduction to 3D Modeling - Complete Tutorial';
   String _currentChannelName = 'Blender Guru';
   String _currentViews = '1.2M views';
   String _currentTimeAgo = '2 days ago';
 
+  List<Map<String, dynamic>> _suggestedVideos = [];
+  bool _isLoading = true;
+
   @override
   void initState() {
     super.initState();
-    _initializePlayer();
+    // 1. Khởi tạo Player theo kiểu Iframe (Mới)
+    _controller = YoutubePlayerController.fromVideoId(
+      videoId: 'pRaC9YldAKw',
+      autoPlay: false,
+      params: const YoutubePlayerParams(
+        showControls: true,
+        showFullscreenButton: true,
+        mute: false,
+      ),
+    );
+
+    // 2. Gọi API lấy dữ liệu thật (Cũ)
     _fetchSuggestedVideos();
   }
 
-  void _initializePlayer() {
-    _controller = YoutubePlayerController(
-      initialVideoId: _currentVideoId,
-      flags: const YoutubePlayerFlags(
-        autoPlay: false,
-        mute: false,
-        enableCaption: true,
-        controlsVisibleAtStart: true,
-      ),
-    )..addListener(_listener);
-  }
-
-  void _listener() {
-    if (_isPlayerReady && mounted && !_controller.value.isFullScreen) {
-      setState(() {});
-    }
-  }
-
+  // Logic gọi API giữ nguyên từ bản cũ
   Future<void> _fetchSuggestedVideos() async {
     try {
-      // Fetch trending videos related to 3D modeling, AR, and technology
       final response = await http.get(
         Uri.parse(
           'https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=10&q=3D+modeling+AR+technology&key=$API_KEY',
@@ -76,19 +69,17 @@ class _VideoScreenState extends State<VideoScreen> {
           _isLoading = false;
         });
 
-        // Fetch view counts for each video
         _fetchViewCounts();
       }
     } catch (e) {
       print('Error fetching videos: $e');
-      setState(() {
-        _isLoading = false;
-      });
+      if(mounted) setState(() => _isLoading = false);
     }
   }
 
   Future<void> _fetchViewCounts() async {
     try {
+      if (_suggestedVideos.isEmpty) return;
       final videoIds = _suggestedVideos.map((v) => v['videoId']).join(',');
       final response = await http.get(
         Uri.parse(
@@ -112,7 +103,9 @@ class _VideoScreenState extends State<VideoScreen> {
     }
   }
 
-  String _formatViews(String viewCount) {
+  // Các hàm helper format text
+  String _formatViews(String? viewCount) {
+    if (viewCount == null) return '0 views';
     final views = int.tryParse(viewCount) ?? 0;
     if (views >= 1000000) {
       return '${(views / 1000000).toStringAsFixed(1)}M views';
@@ -145,16 +138,17 @@ class _VideoScreenState extends State<VideoScreen> {
     }
   }
 
+  // Logic phát video mới (Kết hợp logic UI cũ + controller mới)
   void _playVideo(Map<String, dynamic> video) {
     setState(() {
-      _currentVideoId = video['videoId'];
       _currentVideoTitle = video['title'];
       _currentChannelName = video['channelName'];
       _currentViews = video['views'] ?? '0 views';
       _currentTimeAgo = _getTimeAgo(video['publishedAt']);
     });
 
-    _controller.load(_currentVideoId);
+    // Code mới: Load video bằng iframe controller
+    _controller.loadVideoById(videoId: video['videoId']);
     
     // Scroll to top
     Future.delayed(const Duration(milliseconds: 300), () {
@@ -170,62 +164,37 @@ class _VideoScreenState extends State<VideoScreen> {
 
   @override
   void dispose() {
-    _controller.dispose();
+    _controller.close();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Color(0xFFF5F5F5),
+      backgroundColor: const Color(0xFFF5F5F5), // Màu nền cũ
       body: SafeArea(
         child: Column(
           children: [
-            // Video Player - Fixed at top
+            // --- PLAYER (Phần này dùng thư viện MỚI) ---
             YoutubePlayer(
               controller: _controller,
-              showVideoProgressIndicator: true,
-              progressIndicatorColor: Color(0xFFEC4899),
-              progressColors: ProgressBarColors(
-                playedColor: Color(0xFFEC4899),
-                handleColor: Color(0xFFEC4899),
-                backgroundColor: Colors.grey.shade300,
-                bufferedColor: Colors.grey.shade400,
-              ),
-              onReady: () {
-                _isPlayerReady = true;
-              },
-              bottomActions: [
-                CurrentPosition(),
-                const SizedBox(width: 10),
-                ProgressBar(
-                  isExpanded: true,
-                  colors: ProgressBarColors(
-                    playedColor: Color(0xFFEC4899),
-                    handleColor: Color(0xFFEC4899),
-                    backgroundColor: Colors.grey.shade400,
-                    bufferedColor: Colors.grey.shade300,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                RemainingDuration(),
-                const SizedBox(width: 10),
-                FullScreenButton(),
-              ],
+              aspectRatio: 16 / 9,
             ),
+            // Lưu ý: Player Iframe có sẵn thanh progress bar bên trong video 
+            // nên ta không cần tạo Custom ProgressBar ở bên ngoài như code cũ.
 
-            // Scrollable content below video player
+            // --- NỘI DUNG BÊN DƯỚI (Giữ nguyên UI CŨ) ---
             Expanded(
               child: SingleChildScrollView(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Video Info Card
+                    // 1. Video Info Card (Gradient Pink)
                     Container(
                       margin: const EdgeInsets.all(16),
                       padding: const EdgeInsets.all(20),
                       decoration: BoxDecoration(
-                        gradient: LinearGradient(
+                        gradient: const LinearGradient(
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,
                           colors: [
@@ -236,7 +205,7 @@ class _VideoScreenState extends State<VideoScreen> {
                         borderRadius: BorderRadius.circular(20),
                         boxShadow: [
                           BoxShadow(
-                            color: Color(0xFFEC4899).withOpacity(0.3),
+                            color: const Color(0xFFEC4899).withOpacity(0.3),
                             blurRadius: 12,
                             offset: const Offset(0, 6),
                           ),
@@ -247,7 +216,7 @@ class _VideoScreenState extends State<VideoScreen> {
                         children: [
                           Text(
                             _currentVideoTitle,
-                            style: TextStyle(
+                            style: const TextStyle(
                               color: Colors.white,
                               fontSize: 18,
                               fontWeight: FontWeight.bold,
@@ -268,122 +237,46 @@ class _VideoScreenState extends State<VideoScreen> {
                       ),
                     ),
 
-                    // Action Buttons
+                    // 2. Action Buttons (Like, Share...)
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       child: Row(
                         children: [
                           Expanded(
-                            child: Container(
-                              decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  colors: [Color(0xFF3B82F6), Color(0xFF2563EB)],
-                                ),
-                                borderRadius: BorderRadius.circular(12),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Color(0xFF3B82F6).withOpacity(0.3),
-                                    blurRadius: 8,
-                                    offset: const Offset(0, 4),
-                                  ),
-                                ],
-                              ),
-                              child: ElevatedButton(
-                                onPressed: () {
-                                  // Like action
-                                },
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.transparent,
-                                  shadowColor: Colors.transparent,
-                                  padding: const EdgeInsets.symmetric(vertical: 12),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                ),
-                                child: Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(Icons.thumb_up, color: Colors.white, size: 18),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      '125K',
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
+                            child: _buildGradientButton(
+                              icon: Icons.thumb_up,
+                              label: '125K',
+                              colors: [const Color(0xFF3B82F6), const Color(0xFF2563EB)],
+                              shadowColor: const Color(0xFF3B82F6),
                             ),
                           ),
                           const SizedBox(width: 12),
                           Expanded(
-                            child: Container(
-                              decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  colors: [Color(0xFF10B981), Color(0xFF059669)],
-                                ),
-                                borderRadius: BorderRadius.circular(12),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Color(0xFF10B981).withOpacity(0.3),
-                                    blurRadius: 8,
-                                    offset: const Offset(0, 4),
-                                  ),
-                                ],
-                              ),
-                              child: ElevatedButton(
-                                onPressed: () {
-                                  // Share action
-                                },
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.transparent,
-                                  shadowColor: Colors.transparent,
-                                  padding: const EdgeInsets.symmetric(vertical: 12),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                ),
-                                child: Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(Icons.share, color: Colors.white, size: 18),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      'Share',
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
+                            child: _buildGradientButton(
+                              icon: Icons.share,
+                              label: 'Share',
+                              colors: [const Color(0xFF10B981), const Color(0xFF059669)],
+                              shadowColor: const Color(0xFF10B981),
                             ),
                           ),
                           const SizedBox(width: 12),
                           Container(
                             decoration: BoxDecoration(
-                              gradient: LinearGradient(
+                              gradient: const LinearGradient(
                                 colors: [Color(0xFF8B5CF6), Color(0xFF7C3AED)],
                               ),
                               borderRadius: BorderRadius.circular(12),
                               boxShadow: [
                                 BoxShadow(
-                                  color: Color(0xFF8B5CF6).withOpacity(0.3),
+                                  color: const Color(0xFF8B5CF6).withOpacity(0.3),
                                   blurRadius: 8,
                                   offset: const Offset(0, 4),
                                 ),
                               ],
                             ),
                             child: IconButton(
-                              onPressed: () {
-                                // More options
-                              },
-                              icon: Icon(Icons.more_vert, color: Colors.white),
+                              onPressed: () {},
+                              icon: const Icon(Icons.more_vert, color: Colors.white),
                               padding: const EdgeInsets.all(12),
                             ),
                           ),
@@ -393,13 +286,13 @@ class _VideoScreenState extends State<VideoScreen> {
 
                     const SizedBox(height: 24),
 
-                    // Suggested Videos Section
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                    // 3. Suggested Header
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 16),
                       child: Row(
                         children: [
                           Icon(Icons.video_library, size: 20, color: Colors.black87),
-                          const SizedBox(width: 8),
+                          SizedBox(width: 8),
                           Text(
                             'Suggested Videos',
                             style: TextStyle(
@@ -414,9 +307,9 @@ class _VideoScreenState extends State<VideoScreen> {
 
                     const SizedBox(height: 12),
 
-                    // Suggested Videos List
+                    // 4. List View (Giữ nguyên UI card)
                     _isLoading
-                        ? Container(
+                        ? const SizedBox(
                             height: 300,
                             child: Center(
                               child: CircularProgressIndicator(
@@ -426,7 +319,7 @@ class _VideoScreenState extends State<VideoScreen> {
                           )
                         : ListView.builder(
                             shrinkWrap: true,
-                            physics: NeverScrollableScrollPhysics(),
+                            physics: const NeverScrollableScrollPhysics(),
                             padding: const EdgeInsets.symmetric(horizontal: 16),
                             itemCount: _suggestedVideos.length,
                             itemBuilder: (context, index) {
@@ -446,6 +339,53 @@ class _VideoScreenState extends State<VideoScreen> {
     );
   }
 
+  // Widget Button Gradient (Tách ra cho gọn code)
+  Widget _buildGradientButton({
+    required IconData icon,
+    required String label,
+    required List<Color> colors,
+    required Color shadowColor,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(colors: colors),
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: shadowColor.withOpacity(0.3),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: ElevatedButton(
+        onPressed: () {},
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.transparent,
+          shadowColor: Colors.transparent,
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: Colors.white, size: 18),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Widget Video Card (Giữ nguyên UI Cũ)
   Widget _buildVideoCard(Map<String, dynamic> video) {
     return GestureDetector(
       onTap: () => _playVideo(video),
@@ -469,7 +409,7 @@ class _VideoScreenState extends State<VideoScreen> {
             Stack(
               children: [
                 ClipRRect(
-                  borderRadius: BorderRadius.only(
+                  borderRadius: const BorderRadius.only(
                     topLeft: Radius.circular(16),
                     bottomLeft: Radius.circular(16),
                   ),
@@ -492,6 +432,7 @@ class _VideoScreenState extends State<VideoScreen> {
                     },
                   ),
                 ),
+                // Gradient overlay trên thumbnail
                 Positioned.fill(
                   child: Container(
                     decoration: BoxDecoration(
@@ -499,36 +440,37 @@ class _VideoScreenState extends State<VideoScreen> {
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
                         colors: [
-                          Color(0xFFEC4899).withOpacity(0.3),
+                          const Color(0xFFEC4899).withOpacity(0.3),
                           Colors.transparent,
                         ],
                       ),
-                      borderRadius: BorderRadius.only(
+                      borderRadius: const BorderRadius.only(
                         topLeft: Radius.circular(16),
                         bottomLeft: Radius.circular(16),
                       ),
                     ),
                   ),
                 ),
+                // Nút play nhỏ ở giữa thumbnail
                 Positioned.fill(
                   child: Center(
                     child: Container(
                       width: 56,
                       height: 56,
                       decoration: BoxDecoration(
-                        gradient: LinearGradient(
+                        gradient: const LinearGradient(
                           colors: [Color(0xFFEC4899), Color(0xFFF43F5E)],
                         ),
                         shape: BoxShape.circle,
                         boxShadow: [
                           BoxShadow(
-                            color: Color(0xFFEC4899).withOpacity(0.4),
+                            color: const Color(0xFFEC4899).withOpacity(0.4),
                             blurRadius: 12,
                             offset: const Offset(0, 4),
                           ),
                         ],
                       ),
-                      child: Icon(
+                      child: const Icon(
                         Icons.play_arrow,
                         color: Colors.white,
                         size: 32,
@@ -539,7 +481,7 @@ class _VideoScreenState extends State<VideoScreen> {
               ],
             ),
 
-            // Video Info
+            // Video Info Text
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.all(12),
@@ -548,7 +490,7 @@ class _VideoScreenState extends State<VideoScreen> {
                   children: [
                     Text(
                       video['title'],
-                      style: TextStyle(
+                      style: const TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w600,
                         color: Colors.black87,
@@ -560,7 +502,7 @@ class _VideoScreenState extends State<VideoScreen> {
                     const SizedBox(height: 8),
                     Text(
                       video['channelName'],
-                      style: TextStyle(
+                      style: const TextStyle(
                         fontSize: 13,
                         color: Colors.black54,
                         fontWeight: FontWeight.w500,
@@ -571,7 +513,7 @@ class _VideoScreenState extends State<VideoScreen> {
                     const SizedBox(height: 4),
                     Text(
                       '${video['views'] ?? 'N/A'} • ${_getTimeAgo(video['publishedAt'])}',
-                      style: TextStyle(
+                      style: const TextStyle(
                         fontSize: 12,
                         color: Colors.black45,
                       ),

@@ -12,7 +12,8 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   // --- CẤU HÌNH API GOOGLE GEMINI ---
   // Truy cập https://aistudio.google.com/app/apikey để lấy Key
-  static const String _apiKey = 'AIzaSyCHgGUmPGxoDE-AUELulzWtXnxdrI_Bf_U';
+  static const String _apiKey = 'AIzaSyCYo7VO_r0fNT03tnrzCJif1yHRRAguWXQ';
+  // static const String _apiKey = 'AIzaSyD-c4VodJmH2OV53_QflVAhFnlpGB1fzg4';
   
   late final GenerativeModel _model;
   late final ChatSession _chatSession;
@@ -27,7 +28,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     // Khởi tạo Model
-    _model = GenerativeModel(model: 'gemini-2.0-flash-lite', apiKey: _apiKey);
+    _model = GenerativeModel(model: 'gemini-2.5-flash', apiKey: _apiKey);
     _chatSession = _model.startChat();
     
     // Tin nhắn chào mừng

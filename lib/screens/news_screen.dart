@@ -34,31 +34,51 @@ class Article {
 // ==========================================
 class NewsService {
   static const String _rssUrl = 'https://vnexpress.net/rss/tin-moi-nhat.rss';
+  
+  // 🔴 QUAN TRỌNG: Thay link này bằng link Cloudflare Worker của bạn
+  // Ví dụ: https://my-news-proxy.username.workers.dev
+  static const String _workerUrl = 'https://sparkling-boat-1bf6.levanducanh0911.workers.dev'; 
+
+  // --- Hàm tiện ích: Xử lý URL dựa trên nền tảng ---
+  String _getFinalUrl(String targetUrl) {
+    if (kIsWeb) {
+      // Nếu là Web: Gọi qua Proxy Cloudflare
+      // Cấu trúc: https://worker-url/?url=https://vnexpress...
+      return '$_workerUrl?url=$targetUrl';
+    } else {
+      // Nếu là Mobile (Android/iOS): Gọi trực tiếp (Nhanh hơn, không cần Proxy)
+      return targetUrl;
+    }
+  }
 
   // --- Hàm 1: Lấy danh sách bài mới từ RSS ---
   Future<List<Article>> fetchNews() async {
     try {
-      // Logic Proxy: Nếu là Web thì dùng AllOrigins để tránh lỗi CORS
-      String url = kIsWeb ? 'https://api.allorigins.win/raw?url=$_rssUrl' : _rssUrl;
-
-      final response = await http.get(Uri.parse(url));
+      final String url = _getFinalUrl(_rssUrl);
+      
+      // Thêm User-Agent để trông giống trình duyệt thật, tránh bị chặn
+      final response = await http.get(Uri.parse(url), headers: {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
+        "Accept": "application/xml, text/xml, */*; q=0.01",
+      });
 
       if (response.statusCode == 200) {
+        // Lưu ý: Đôi khi Worker trả về UTF-8 nhưng header thiếu, 
+        // dòng này giúp ép kiểu decode đúng tiếng Việt nếu bị lỗi font.
+        // Tuy nhiên http package bản mới thường tự xử lý tốt.
+        // var decodedBody = utf8.decode(response.bodyBytes); 
+
         final document = XmlDocument.parse(response.body);
         final items = document.findAllElements('item');
 
         return items.map((element) {
-          final title = element.findElements('title').isNotEmpty 
-              ? element.findElements('title').first.innerText : "";
-          final link = element.findElements('link').isNotEmpty 
-              ? element.findElements('link').first.innerText : "";
-          final pubDate = element.findElements('pubDate').isNotEmpty 
-              ? element.findElements('pubDate').first.innerText : "";
+          final title = element.findElements('title').firstOrNull?.innerText ?? "";
+          final link = element.findElements('link').firstOrNull?.innerText ?? "";
+          final pubDate = element.findElements('pubDate').firstOrNull?.innerText ?? "";
           
-          String descriptionRaw = element.findElements('description').isNotEmpty 
-              ? element.findElements('description').first.innerText : "";
+          String descriptionRaw = element.findElements('description').firstOrNull?.innerText ?? "";
 
-          // Trích xuất ảnh từ thẻ HTML description của RSS
+          // Trích xuất ảnh
           String? imgUrl;
           final imgRegExp = RegExp(r'src="([^"]+)"');
           final match = imgRegExp.firstMatch(descriptionRaw);
@@ -66,7 +86,7 @@ class NewsService {
             imgUrl = match.group(1);
           }
 
-          // Làm sạch tóm tắt (xóa thẻ HTML)
+          // Làm sạch tóm tắt
           final cleanDescription = descriptionRaw
               .replaceAll(RegExp(r'<[^>]*>'), '')
               .replaceAll('&nbsp;', ' ')
@@ -81,7 +101,7 @@ class NewsService {
           );
         }).toList();
       } else {
-        throw Exception('Failed to load RSS');
+        throw Exception('Failed to load RSS: ${response.statusCode}');
       }
     } catch (e) {
       throw Exception('Error fetching news: $e');
@@ -89,30 +109,46 @@ class NewsService {
   }
 
   // --- Hàm 2: Cào nội dung chi tiết (CRAWL FULL TEXT) ---
-  Future<String> fetchArticleContent(String url) async {
+  Future<String> fetchArticleContent(String targetLink) async {
     try {
-      // Logic Proxy cho Web
-      String fetchUrl = kIsWeb ? 'https://api.allorigins.win/raw?url=$url' : url;
+      final String url = _getFinalUrl(targetLink);
 
-      final response = await http.get(Uri.parse(fetchUrl));
+      final response = await http.get(Uri.parse(url), headers: {
+         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
+      });
 
       if (response.statusCode == 200) {
         var document = parser.parse(response.body);
 
-        // VnExpress thường để nội dung trong class 'fck_detail'
+        // Các class chứa nội dung của VnExpress
         dom.Element? contentElement = document.getElementsByClassName('fck_detail').firstOrNull;
-        
-        // Dự phòng các trường hợp khác của VnExpress
         contentElement ??= document.getElementsByClassName('sidebar-1').firstOrNull; 
         contentElement ??= document.getElementsByTagName('article').firstOrNull;
 
-        if (contentElement != null) {
-          // Xóa các thành phần không cần thiết (Quảng cáo, bài liên quan...) bên trong bài viết
-          contentElement.getElementsByClassName('box-category-related').forEach((e) => e.remove());
-          
-          return contentElement.innerHtml;
-        } else {
-          return "<p>Không thể lấy nội dung chi tiết tự động. Vui lòng nhấn nút bên dưới để mở trình duyệt.</p>";
+      if (contentElement != null) {
+        // --- XỬ LÝ LÀM SẠCH HTML ---
+        
+        // 1. Xóa rác
+        contentElement.getElementsByClassName('box-category-related').forEach((e) => e.remove());
+        contentElement.getElementsByClassName('header-content').forEach((e) => e.remove());
+        contentElement.getElementsByClassName('footer-content').forEach((e) => e.remove());
+        
+        // 2. [QUAN TRỌNG] Fix lỗi ảnh không hiện (Lazy loading)
+        // Tìm tất cả thẻ img, nếu có data-src thì gán nó vào src
+        for (var img in contentElement.getElementsByTagName('img')) {
+          if (img.attributes.containsKey('data-src')) {
+            img.attributes['src'] = img.attributes['data-src']!;
+          }
+        }
+        
+        // 3. Fix lỗi video (VnExpress dùng iframe/video tag phức tạp, tạm thời ẩn đi hoặc thay bằng text)
+        contentElement.getElementsByTagName('video').forEach((e) {
+           e.replaceWith(dom.Element.html('<p><i>[Video content - Vui lòng xem trên web]</i></p>'));
+        });
+
+        return contentElement.innerHtml;
+      } else {
+          return "<p>Không thể lấy nội dung chi tiết. <br>Vui lòng nhấn nút bên dưới để mở gốc.</p>";
         }
       } else {
         return "<p>Lỗi tải trang: ${response.statusCode}</p>";
@@ -169,16 +205,6 @@ class _NewsScreenState extends State<NewsScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.arrow_back, color: Colors.white),
-                      const SizedBox(width: 8),
-                      const Text("Back to Dashboard", style: TextStyle(color: Colors.white, fontSize: 16)),
-                      const Spacer(),
-                      const Icon(Icons.menu, color: Colors.white),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
                   Row(
                     children: [
                       const Icon(Icons.public, color: Colors.blueAccent, size: 28),
@@ -457,16 +483,26 @@ class _ArticleDetailScreenState extends State<ArticleDetailScreen> {
                   snapshot.data ?? "",
                   textStyle: const TextStyle(fontSize: 16, height: 1.6, color: Colors.black87),
                   
-                  // Style cho ảnh trong bài viết
-                  customStylesBuilder: (dom.Element element) {
-                    if (element.localName == 'img') {
-                      return {'width': '100%', 'height': 'auto', 'border-radius': '8px', 'margin': '10px 0'};
+                  // Dùng customWidgetBuilder để can thiệp sâu vào cấu trúc
+                  customWidgetBuilder: (element) {
+                    // 1. Bắt các thẻ chứa ảnh và chú thích của VnExpress (thường là figure hoặc table class="tplCaption")
+                    if (element.localName == 'figure' || (element.localName == 'table' && element.classes.contains('tplCaption'))) {
+                      String? imgSrc = element.getElementsByTagName('img').firstOrNull?.attributes['src'];
+                      // Lấy text chú thích (bỏ qua text của bản thân cái ảnh)
+                      String caption = element.text.replaceFirst(imgSrc ?? "", "").trim();
+                      
+                      // Nếu tìm thấy ảnh, trả về Widget tự dựng
+                      if (imgSrc != null) {
+                        return _buildCustomImageBlock(imgSrc, caption);
+                      }
                     }
-                    // Ẩn các thành phần video/iframe của VnExpress để tránh lỗi
+
+                    // 2. Ẩn video/iframe để tránh lỗi
                     if (element.localName == 'video' || element.localName == 'iframe') {
-                      return {'display': 'none'};
+                      return Container();
                     }
-                    return null;
+                    
+                    return null; // Các thẻ khác để mặc định
                   },
                 );
               },
@@ -546,6 +582,45 @@ class _ArticleDetailScreenState extends State<ArticleDetailScreen> {
           child: IconButton(onPressed: () {}, icon: const Icon(Icons.more_vert, color: Colors.white)),
         ),
       ],
+    );
+  }
+  Widget _buildCustomImageBlock(String src, String caption) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      child: Column(
+        children: [
+          // Ảnh
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: CachedNetworkImage(
+              imageUrl: src,
+              width: double.infinity, // Full chiều ngang
+              fit: BoxFit.cover,
+              placeholder: (context, url) => Container(
+                height: 200, 
+                color: Colors.grey[200], 
+                child: const Center(child: CircularProgressIndicator())
+              ),
+              errorWidget: (context, url, error) => const SizedBox(), // Ẩn nếu lỗi
+            ),
+          ),
+          // Chú thích (chỉ hiện nếu có nội dung)
+          if (caption.isNotEmpty) 
+            Padding(
+              padding: const EdgeInsets.only(top: 8, left: 16, right: 16),
+              child: Text(
+                caption,
+                textAlign: TextAlign.center, // Căn giữa chú thích
+                style: const TextStyle(
+                  fontSize: 13,
+                  color: Colors.grey,
+                  fontStyle: FontStyle.italic,
+                  height: 1.4,
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
